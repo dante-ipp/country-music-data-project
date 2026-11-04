@@ -1,0 +1,3 @@
+(executables
+ (names get_albums get_tracks)
+ (libraries music_scaper_lib base stdio sqlite3))

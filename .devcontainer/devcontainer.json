@@ -1,0 +1,16 @@
+{
+    "name": "OCaml + Quarto Dev Environment",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ocamllabs.ocaml-platform",
+                "ms-toolsai.jupyter",
+                "quarto.quarto"
+            ]
+        }
+    },
+    "remoteUser": "opam"
+}

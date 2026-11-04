@@ -1,0 +1,9 @@
+### Project specific
+data/
+.env
+test/test_files/
+
+
+### OCaml ###
+_build/
+.DS_Store
