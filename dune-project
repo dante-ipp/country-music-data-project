@@ -5,16 +5,15 @@
 (generate_opam_files true)
 
 (source
- (github username/reponame))
+ (github dante-ipp/country-music-data-project))
 
 (authors "James C")
-
-(maintainers "Maintainer Name <maintainer@example.com>")
 
 (license LICENSE)
 
 (package
  (name country_data_proj)
+ (allow_empty)
  (synopsis "A short synopsis")
  (description "A longer description")
  (depends ocaml)

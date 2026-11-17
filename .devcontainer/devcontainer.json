@@ -8,7 +8,9 @@
             "extensions": [
                 "ocamllabs.ocaml-platform",
                 "ms-toolsai.jupyter",
-                "quarto.quarto"
+                "quarto.quarto",
+                "alexcvzz.vscode-sqlite",
+                "qwtel.sqlite-viewer"
             ]
         }
     },

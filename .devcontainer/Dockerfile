@@ -20,10 +20,12 @@ RUN opam pin add -n -y owl-base.dev git+https://github.com/owlbarn/owl.git && \
     opam pin add -n -y owl.dev git+https://github.com/owlbarn/owl.git
 
 RUN opam update && \
-    opam install -y dune utop \
-    ocaml-lsp-server ocamlformat base core core_unix \
-    ezcurl lambdasoup caqti sqlite3 \
-    owl jupyter ounit2 yojson
+    opam install -y base core core_unix async owl ocaml-lsp-server ocamlformat
+
+RUN opam install -y dune utop \
+    lambdasoup caqti sqlite3 caqti-async caqti-driver-sqlite3 \
+    ezcurl uri ppx_jane \
+    jupyter ounit2 yojson
 
 RUN opam exec -- ocaml-jupyter-opam-genspec && \
     python3 -m jupyter kernelspec install --user --name ocaml-jupyter "$(opam var share)/jupyter"
