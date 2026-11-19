@@ -77,7 +77,7 @@ let safe_id_from_json json_str =
       Error (sprintf "Unknown error: %s | JSON snippet: %s" (Exn.to_string e) snippet)
 
 let user_agent_header = 
-  ("User-Agent", "Music-data-scraper (jamescarraro@outlook.com)")
+  ("User-Agent", "Music-data-scraper (github.com/dante-ipp/country-music-data-project)")
 
 let rec get_with_retry ?(attempts=3) url =
   let result = Ezcurl.get ~headers:[user_agent_header] ~url () in
@@ -165,39 +165,39 @@ let get_album_data (a : known_album_data) : (album_data, string) result =
   let () = Core_unix.sleep 2 in
   safe_parse_album a.album_id track_json
 
-let get_known_album_data db = 
+let check_rc rc =
+  let open Sqlite3 in match rc with
+  | Rc.OK | Rc.DONE -> ()
+  | _ -> failwith (Rc.to_string rc)
+
+let get_known_album_data db ~status = 
   let open Sqlite3 in
   let sql = "
     SELECT a.id, a.title, a.release_year, GROUP_CONCAT(ar.name, '|')
     FROM album a
     LEFT JOIN album_artist aa ON a.id = aa.album_id
     LEFT JOIN artist ar ON aa.artist_id = ar.id
+    WHERE a.scrape_status = ?
     GROUP BY a.id" in 
   let stmt = prepare db sql in
-  let rec helper acc = 
-    match step stmt with 
-    | Rc.ROW -> 
-      let album_id = match column stmt 0 with
-      | Data.INT i -> Int64.to_int_exn i | _ -> 0 in
-
-      let album_name = match column stmt 1 with 
-      | Data.TEXT str -> str | _ -> "" in
-
-      let year = match column stmt 2 with
-      | Data.INT i -> Int64.to_int_exn i | _ -> 0 in
-
-      let artists = match column stmt 3 with 
-      | Data.TEXT str -> String.split str ~on:'|' | _ -> [] in
-
-      let album = {album_id; album_name; artists; year} in
-
-      helper (album :: acc)
-    | Rc.DONE -> acc
-    | _ -> failwith "database error during read"
-  in 
+  
   try 
+    check_rc (bind stmt 1 (Data.INT (Int64.of_int status)));
+    
+    let rec helper acc = 
+      match step stmt with 
+      | Rc.ROW -> 
+        let album_id = match column stmt 0 with Data.INT i -> Int64.to_int_exn i | _ -> 0 in
+        let album_name = match column stmt 1 with Data.TEXT str -> str | _ -> "" in
+        let year = match column stmt 2 with Data.INT i -> Int64.to_int_exn i | _ -> 0 in
+        let artists = match column stmt 3 with Data.TEXT str -> String.split str ~on:'|' | _ -> [] in
+        let album = {album_id; album_name; artists; year} in
+        helper (album :: acc)
+      | Rc.DONE -> acc
+      | rc -> failwith (Rc.to_string rc)
+    in 
     let results = helper [] in
-    ignore (finalize stmt);
+    check_rc (finalize stmt);
     List.rev results
   with e -> 
     ignore (finalize stmt); 
@@ -205,14 +205,19 @@ let get_known_album_data db =
 
 let write_album_data db data = 
   let open Sqlite3 in
-  ignore (exec db "BEGIN TRANSACTION");
+  check_rc (exec db "BEGIN TRANSACTION");
 
   let song_sql = "INSERT INTO song (title, track_number, duration_ms, album_id) VALUES (?, ?, ?, ?)" in
+  let song_artist_sql = "
+    INSERT OR IGNORE INTO song_artist (song_id, artist_id) 
+    SELECT ?, artist_id FROM album_artist WHERE album_id = ?" in
+
   let label_insert_sql = "INSERT OR IGNORE INTO label (name) VALUES (?)" in
   let label_select_sql = "SELECT id FROM label WHERE name = ?" in
   let album_label_sql = "INSERT OR IGNORE INTO album_label (album_id, label_id) VALUES (?, ?)" in
 
   let song_stmt = prepare db song_sql in
+  let sa_stmt = prepare db song_artist_sql in
   let lbl_ins_stmt = prepare db label_insert_sql in
   let lbl_sel_stmt = prepare db label_select_sql in
   let alb_lbl_stmt = prepare db album_label_sql in
@@ -224,58 +229,76 @@ let write_album_data db data =
       let track_num = Int64.of_int song.track_number in
       let a_id = Int64.of_int data.album_id in 
 
-      ignore (bind song_stmt 1 (Data.TEXT title));
-      ignore (bind song_stmt 2 (Data.INT track_num));
-      ignore (bind song_stmt 3 (Data.INT duration_ms));
-      ignore (bind song_stmt 4 (Data.INT a_id));
+      check_rc (bind song_stmt 1 (Data.TEXT title));
+      check_rc (bind song_stmt 2 (Data.INT track_num));
+      check_rc (bind song_stmt 3 (Data.INT duration_ms));
+      check_rc (bind song_stmt 4 (Data.INT a_id));
+      check_rc (step song_stmt);
+      check_rc (reset song_stmt);
 
-      match step song_stmt with
-      | Rc.DONE -> ignore (reset song_stmt)
-      | _ -> failwith "Failed to insert song"
-      ) data.songs;
+      let new_song_id = last_insert_rowid db in
+
+      check_rc (bind sa_stmt 1 (Data.INT new_song_id));
+      check_rc (bind sa_stmt 2 (Data.INT a_id));
+      check_rc (step sa_stmt);
+      check_rc (reset sa_stmt);
+
+    ) data.songs;
 
     List.iter ~f:(fun label_name -> 
-      ignore (bind lbl_ins_stmt 1 (Data.TEXT label_name));
-      (match step lbl_ins_stmt with
-       | Rc.DONE -> ignore (reset lbl_ins_stmt)
-       | _ -> failwith "Failed to insert label");
+      check_rc (bind lbl_ins_stmt 1 (Data.TEXT label_name));
       
-    ignore (bind lbl_sel_stmt 1 (Data.TEXT label_name));
+      check_rc (step lbl_ins_stmt);
+      check_rc (reset lbl_ins_stmt);
+      
+      check_rc (bind lbl_sel_stmt 1 (Data.TEXT label_name));
+      
       let label_id = match step lbl_sel_stmt with
         | Rc.ROW -> 
             let id = match column lbl_sel_stmt 0 with
               | Data.INT i -> i
               | _ -> failwith "Label ID not an integer" 
             in
-            ignore (reset lbl_sel_stmt);
+            check_rc (reset lbl_sel_stmt);
             id
-        | _ -> failwith "Failed to retrieve label ID"
+        | rc -> failwith (Rc.to_string rc)
       in
 
       let a_id = Int64.of_int data.album_id in 
-      ignore (bind alb_lbl_stmt 1 (Data.INT a_id));
-      ignore (bind alb_lbl_stmt 2 (Data.INT label_id));
+      check_rc (bind alb_lbl_stmt 1 (Data.INT a_id));
+      check_rc (bind alb_lbl_stmt 2 (Data.INT label_id));
       
-      match step alb_lbl_stmt with
-      | Rc.DONE -> ignore (reset alb_lbl_stmt)
-      | _ -> failwith "Failed to link album and label"
+      check_rc (step alb_lbl_stmt);
+      check_rc (reset alb_lbl_stmt);
     ) data.labels;
 
-    ignore (finalize song_stmt);
-    ignore (finalize lbl_ins_stmt);
-    ignore (finalize lbl_sel_stmt);
-    ignore (finalize alb_lbl_stmt);
+    check_rc (finalize song_stmt);
+    check_rc (finalize sa_stmt);
+    check_rc (finalize lbl_ins_stmt);
+    check_rc (finalize lbl_sel_stmt);
+    check_rc (finalize alb_lbl_stmt);
 
-    ignore (exec db "COMMIT TRANSACTION")
+    check_rc (exec db "COMMIT TRANSACTION")
   with e -> 
     ignore (exec db "ROLLBACK TRANSACTION");
     ignore (finalize song_stmt);
+    ignore (finalize sa_stmt);
     ignore (finalize lbl_ins_stmt);
     ignore (finalize lbl_sel_stmt);
     ignore (finalize alb_lbl_stmt);
     raise e
 
-    
-
-
+let set_album_scrape_status db ~album_id ~status =
+  let open Sqlite3 in
+  let sql = "UPDATE album SET scrape_status = ? WHERE id = ?" in
+  let stmt = prepare db sql in
   
+  try
+    check_rc (bind stmt 1 (Data.INT (Int64.of_int status)));
+    check_rc (bind stmt 2 (Data.INT (Int64.of_int album_id)));
+    
+    check_rc (step stmt);
+    check_rc (finalize stmt)
+  with e -> 
+    ignore (finalize stmt);
+    raise e

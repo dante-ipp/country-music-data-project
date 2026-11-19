@@ -24,7 +24,10 @@ type album_data = {
 val get_album_data : known_album_data -> (album_data, string) result
 
 (** gets the known album data from the sqlite3 db *)
-val get_known_album_data : Sqlite3.db -> known_album_data list
+val get_known_album_data : Sqlite3.db -> status:int-> known_album_data list
 
 (** writes the new album data to the database *)
 val write_album_data : Sqlite3.db -> album_data -> unit
+
+(** sets the scrape status to *)
+val set_album_scrape_status : Sqlite3.db -> album_id:int -> status:int -> unit 
